@@ -8,22 +8,40 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
+// Модель для хранения вычислений в базе данных
 type Calculation struct {
-	ID         string `json:"id"`
+	ID         string `gorm:"primaryKey" json:"id"`
 	Expression string `json:"expression"`
 	Result     string `json:"result"`
 }
 
+// Структура для запроса вычисления
 type CalculationRequest struct {
 	Expression string `json:"expression"`
 }
 
-var calculations = []Calculation{}
+var db *gorm.DB
 
+// Инициализация базы данных
+func initDB() error {
+	dsn := "host=localhost user=postgres password=admin dbname=go-calc port=5432 sslmode=disable"
+	var err error
+	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return err
+	}
+
+	// Автоматическая миграция таблицы
+	return db.AutoMigrate(&Calculation{})
+}
+
+// Функция для вычисления выражения
 func calculateExpression(expression string) (string, error) {
-	expr, err := govaluate.NewEvaluableExpression(expression) // Создаем выражение (55 + 55)
+	expr, err := govaluate.NewEvaluableExpression(expression)
 	if err != nil {
 		return "", err
 	}
@@ -31,27 +49,28 @@ func calculateExpression(expression string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
-	return fmt.Sprintf("%v", result), err
+	return fmt.Sprintf("%v", result), nil
 }
 
+// Получение всех расчетов из базы
 func getCalculations(c echo.Context) error {
+	var calculations []Calculation
+	if err := db.Find(&calculations).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch calculations"})
+	}
 	return c.JSON(http.StatusOK, calculations)
 }
 
+// Создание нового расчета
 func postCalculations(c echo.Context) error {
 	var req CalculationRequest
 	if err := c.Bind(&req); err != nil {
-		fmt.Println("Error binding request:", err)
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid Request"}) // Ошибка запроса
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid Request"})
 	}
-
-	fmt.Println("Received expression:", req.Expression)
 
 	result, err := calculateExpression(req.Expression)
 	if err != nil {
-		fmt.Println("Error calculating expression:", err)
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid Expression"}) // Ошибка вычислений
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid Expression"})
 	}
 
 	calc := Calculation{
@@ -60,19 +79,19 @@ func postCalculations(c echo.Context) error {
 		Result:     result,
 	}
 
-	calculations = append(calculations, calc)
-
-	fmt.Println("Calculation added:", calc)
+	if err := db.Create(&calc).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save calculation"})
+	}
 
 	return c.JSON(http.StatusCreated, calc)
 }
 
+// Обновление существующего расчета
 func patchCalculations(c echo.Context) error {
 	id := c.Param("id")
-
 	var req CalculationRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid Request"}) // Ошибка запроса
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid Request"})
 	}
 
 	result, err := calculateExpression(req.Expression)
@@ -80,33 +99,36 @@ func patchCalculations(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid expression"})
 	}
 
-	for i, calculation := range calculations {
-		if calculation.ID == id {
-			calculations[i].Expression = req.Expression
-			calculations[i].Result = result
-			return c.JSON(http.StatusOK, calculations[i])
-		}
-
+	var calc Calculation
+	if err := db.First(&calc, "id = ?", id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "Calculation not found"})
 	}
 
-	return c.JSON(http.StatusBadRequest, map[string]string{"error": "Calculation not found"})
+	calc.Expression = req.Expression
+	calc.Result = result
 
+	if err := db.Save(&calc).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update calculation"})
+	}
+
+	return c.JSON(http.StatusOK, calc)
 }
 
-func deleteCalculation(c echo.Context) error {
+// Удаление расчета
+func deleteCalculations(c echo.Context) error {
 	id := c.Param("id")
-
-	for i, calculation := range calculations {
-		if calculation.ID == id {
-			calculations = append(calculations[:i], calculations[i+1:]...)
-			return c.NoContent(http.StatusNoContent)
-		}
+	if err := db.Delete(&Calculation{}, "id = ?", id).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to delete calculation"})
 	}
-
-	return c.JSON(http.StatusBadRequest, map[string]string{"error": "Calculation not found"})
+	return c.NoContent(http.StatusNoContent)
 }
 
 func main() {
+	// Инициализация базы данных
+	if err := initDB(); err != nil {
+		panic(fmt.Sprintf("Failed to connect to database: %v", err))
+	}
+
 	e := echo.New()
 
 	e.Use(middleware.CORS())
@@ -115,8 +137,8 @@ func main() {
 	e.GET("/calculations", getCalculations)
 	e.POST("/calculations", postCalculations)
 	e.PATCH("/calculations/:id", patchCalculations)
-	e.DELETE("/calculations/:id", deleteCalculation)
+	e.DELETE("/calculations/:id", deleteCalculations)
 
 	fmt.Println("Server is running on http://localhost:8080")
-	e.Start("localhost:8080")
+	e.Start(":8080")
 }
