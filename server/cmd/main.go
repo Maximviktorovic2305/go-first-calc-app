@@ -8,49 +8,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
 
-// Модель для хранения вычислений в базе данных
-type Calculation struct {
-	ID         string `gorm:"primaryKey" json:"id"`
-	Expression string `json:"expression"`
-	Result     string `json:"result"`
-}
 
-// Структура для запроса вычисления
-type CalculationRequest struct {
-	Expression string `json:"expression"`
-}
 
-var db *gorm.DB
 
-// Инициализация базы данных
-func initDB() error {
-	dsn := "host=localhost user=postgres password=admin dbname=go-calc port=5432 sslmode=disable"
-	var err error
-	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		return err
-	}
 
-	// Автоматическая миграция таблицы
-	return db.AutoMigrate(&Calculation{})
-}
 
-// Функция для вычисления выражения
-func calculateExpression(expression string) (string, error) {
-	expr, err := govaluate.NewEvaluableExpression(expression)
-	if err != nil {
-		return "", err
-	}
-	result, err := expr.Evaluate(nil)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%v", result), nil
-}
 
 // Получение всех расчетов из базы
 func getCalculations(c echo.Context) error {
