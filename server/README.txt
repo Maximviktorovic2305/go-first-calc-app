@@ -1,1 +1,2 @@
-docker run --name postgres-container -e POSTRGES_PASSWORD=admin -d -p 5432:5432 postgres
+К счастью, Frontend написан не мной, а вставлен для тестирования бэка :)
+Backend написан в качестве знакомства с go
